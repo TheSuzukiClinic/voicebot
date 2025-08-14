@@ -1,3 +1,17 @@
+@app.route("/record", methods=["GET","POST"])
+def record():
+    vr = VoiceResponse()
+    with vr.record(
+        action=url_for("after_record", _external=True, retry=0),
+        transcribe=False,
+        max_length=90,
+        play_beep=True,
+        finishOnKey="#",
+        timeout=5,
+        trim="trim-silence"
+    ):
+        vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
+    return Response(str(vr), mimetype="text/xml")
 # app.py — Render用：Whisper API版（ローカルwhisper不使用）, BASE_URL不要
 import os, time, json, tempfile, subprocess, requests
 from flask import Flask, request, Response, url_for, make_response
@@ -31,6 +45,9 @@ def after_record():
     retry = int(request.args.get("retry", "0"))
     recording_url = request.form.get("RecordingUrl") or request.values.get("RecordingUrl")
     vr = VoiceResponse()
+vr.redirect(url_for("record", _external=True), method="POST")
+
+
 
     if not recording_url:
         if retry == 0:

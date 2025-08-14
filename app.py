@@ -1,5 +1,3 @@
-cd ~/voicebot
-
 cat > app.py << 'PY'
 # app.py — Render用：Whisper API版／/recordはGET/POST対応／無音リトライ／エラーハンドラ付き
 import os, time, json, tempfile, subprocess, requests

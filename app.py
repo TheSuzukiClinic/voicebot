@@ -1,9 +1,105 @@
 # app.py — Render用：Whisper API版（ローカルwhisper不使用）, BASE_URL不要
 import os, time, json, tempfile, subprocess, requests
-from flask import Flask, request, Response, url_for
+from flask import Flask, request, Response, url_for, make_response
+
 from twilio.twiml.voice_response import VoiceResponse, Gather
 
 app = Flask(__name__)
+@app.errorhandler(Exception)
+def handle_any_error(e):
+    print(f"[ERROR] {repr(e)}")
+    vr = VoiceResponse()
+    vr.say("システムエラーが発生しました。お手数ですが、もう一度おかけ直しください。", language="ja-JP")
+    return Response(str(vr), mimetype="text/xml", status=200)
+@app.route("/record", methods=["GET","POST"])
+def record():
+    vr = VoiceResponse()
+    with vr.record(
+        action=url_for("after_record", _external=True, retry=0),
+        transcribe=False,
+        max_length=90,
+        play_beep=True,
+        finishOnKey="#",
+        timeout=5,
+        trim="trim-silence"
+    ):
+        vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
+    return Response(str(vr), mimetype="text/xml")
+vr.redirect(url_for("record", _external=True), method="POST")
+@app.route("/after_record", methods=["GET","POST"])
+def after_record():
+    retry = int(request.args.get("retry", "0"))
+    recording_url = request.form.get("RecordingUrl") or request.values.get("RecordingUrl")
+    vr = VoiceResponse()
+
+    if not recording_url:
+        if retry == 0:
+            vr.say("音声が記録されませんでした。もう一度お願いします。", language="ja-JP")
+            with vr.record(
+                action=url_for("after_record", _external=True, retry=1),
+                transcribe=False,
+                max_length=90,
+                play_beep=True,
+                finishOnKey="#",
+                timeout=5,
+                trim="trim-silence"
+            ):
+                vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
+            return Response(str(vr), mimetype="text/xml")
+        else:
+            vr.say("お電話ありがとうございました。またおかけください。", language="ja-JP")
+            return Response(str(vr), mimetype="text/xml")
+
+    try:
+        audio = backoff_retry(lambda: download_recording(recording_url))
+        wav16 = to_pcm16k_mono(audio)
+        raw = backoff_retry(lambda: whisper_transcribe_wav16(wav16))
+        text = clean_ja_transcript(raw)
+        intent = route_intent(text)
+        reply = reply_for(intent)
+        vr.say(reply, language="ja-JP")
+    except Exception as e:
+        print(f"[AFTER_RECORD ERROR] {repr(e)}")
+        vr.say("うまく聞き取れませんでした。もう一度ゆっくりお話しください。", language="ja-JP")
+
+    return Response(str(vr), mimetype="text/xml")
+@app.route("/after_record", methods=["GET","POST"])
+def after_record():
+    retry = int(request.args.get("retry", "0"))
+    recording_url = request.form.get("RecordingUrl") or request.values.get("RecordingUrl")
+    vr = VoiceResponse()
+
+    if not recording_url:
+        if retry == 0:
+            vr.say("音声が記録されませんでした。もう一度お願いします。", language="ja-JP")
+            with vr.record(
+                action=url_for("after_record", _external=True, retry=1),
+                transcribe=False,
+                max_length=90,
+                play_beep=True,
+                finishOnKey="#",
+                timeout=5,
+                trim="trim-silence"
+            ):
+                vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
+            return Response(str(vr), mimetype="text/xml")
+        else:
+            vr.say("お電話ありがとうございました。またおかけください。", language="ja-JP")
+            return Response(str(vr), mimetype="text/xml")
+
+    try:
+        audio = backoff_retry(lambda: download_recording(recording_url))
+        wav16 = to_pcm16k_mono(audio)
+        raw = backoff_retry(lambda: whisper_transcribe_wav16(wav16))
+        text = clean_ja_transcript(raw)
+        intent = route_intent(text)
+        reply = reply_for(intent)
+        vr.say(reply, language="ja-JP")
+    except Exception as e:
+        print(f"[AFTER_RECORD ERROR] {repr(e)}")
+        vr.say("うまく聞き取れませんでした。もう一度ゆっくりお話しください。", language="ja-JP")
+
+    return Response(str(vr), mimetype="text/xml")
 
 # --- 超ミニ後処理（日本語整形） ---
 def clean_ja_transcript(text: str) -> str:

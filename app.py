@@ -1,124 +1,14 @@
-@app.route("/record", methods=["GET","POST"])
-def record():
-    vr = VoiceResponse()
-    with vr.record(
-        action=url_for("after_record", _external=True, retry=0),
-        transcribe=False,
-        max_length=90,
-        play_beep=True,
-        finishOnKey="#",
-        timeout=5,
-        trim="trim-silence"
-    ):
-        vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
-    return Response(str(vr), mimetype="text/xml")
-# app.py — Render用：Whisper API版（ローカルwhisper不使用）, BASE_URL不要
-import os, time, json, tempfile, subprocess, requests
-from flask import Flask, request, Response, url_for, make_response
+cd ~/voicebot
 
+cat > app.py << 'PY'
+# app.py — Render用：Whisper API版／/recordはGET/POST対応／無音リトライ／エラーハンドラ付き
+import os, time, json, tempfile, subprocess, requests
+from flask import Flask, request, Response, url_for
 from twilio.twiml.voice_response import VoiceResponse, Gather
 
 app = Flask(__name__)
-@app.errorhandler(Exception)
-def handle_any_error(e):
-    print(f"[ERROR] {repr(e)}")
-    vr = VoiceResponse()
-    vr.say("システムエラーが発生しました。お手数ですが、もう一度おかけ直しください。", language="ja-JP")
-    return Response(str(vr), mimetype="text/xml", status=200)
-@app.route("/record", methods=["GET","POST"])
-def record():
-    vr = VoiceResponse()
-    with vr.record(
-        action=url_for("after_record", _external=True, retry=0),
-        transcribe=False,
-        max_length=90,
-        play_beep=True,
-        finishOnKey="#",
-        timeout=5,
-        trim="trim-silence"
-    ):
-        vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
-    return Response(str(vr), mimetype="text/xml")
-vr.redirect(url_for("record", _external=True), method="POST")
-@app.route("/after_record", methods=["GET","POST"])
-def after_record():
-    retry = int(request.args.get("retry", "0"))
-    recording_url = request.form.get("RecordingUrl") or request.values.get("RecordingUrl")
-    vr = VoiceResponse()
-vr.redirect(url_for("record", _external=True), method="POST")
 
-
-
-    if not recording_url:
-        if retry == 0:
-            vr.say("音声が記録されませんでした。もう一度お願いします。", language="ja-JP")
-            with vr.record(
-                action=url_for("after_record", _external=True, retry=1),
-                transcribe=False,
-                max_length=90,
-                play_beep=True,
-                finishOnKey="#",
-                timeout=5,
-                trim="trim-silence"
-            ):
-                vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
-            return Response(str(vr), mimetype="text/xml")
-        else:
-            vr.say("お電話ありがとうございました。またおかけください。", language="ja-JP")
-            return Response(str(vr), mimetype="text/xml")
-
-    try:
-        audio = backoff_retry(lambda: download_recording(recording_url))
-        wav16 = to_pcm16k_mono(audio)
-        raw = backoff_retry(lambda: whisper_transcribe_wav16(wav16))
-        text = clean_ja_transcript(raw)
-        intent = route_intent(text)
-        reply = reply_for(intent)
-        vr.say(reply, language="ja-JP")
-    except Exception as e:
-        print(f"[AFTER_RECORD ERROR] {repr(e)}")
-        vr.say("うまく聞き取れませんでした。もう一度ゆっくりお話しください。", language="ja-JP")
-
-    return Response(str(vr), mimetype="text/xml")
-@app.route("/after_record", methods=["GET","POST"])
-def after_record():
-    retry = int(request.args.get("retry", "0"))
-    recording_url = request.form.get("RecordingUrl") or request.values.get("RecordingUrl")
-    vr = VoiceResponse()
-
-    if not recording_url:
-        if retry == 0:
-            vr.say("音声が記録されませんでした。もう一度お願いします。", language="ja-JP")
-            with vr.record(
-                action=url_for("after_record", _external=True, retry=1),
-                transcribe=False,
-                max_length=90,
-                play_beep=True,
-                finishOnKey="#",
-                timeout=5,
-                trim="trim-silence"
-            ):
-                vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
-            return Response(str(vr), mimetype="text/xml")
-        else:
-            vr.say("お電話ありがとうございました。またおかけください。", language="ja-JP")
-            return Response(str(vr), mimetype="text/xml")
-
-    try:
-        audio = backoff_retry(lambda: download_recording(recording_url))
-        wav16 = to_pcm16k_mono(audio)
-        raw = backoff_retry(lambda: whisper_transcribe_wav16(wav16))
-        text = clean_ja_transcript(raw)
-        intent = route_intent(text)
-        reply = reply_for(intent)
-        vr.say(reply, language="ja-JP")
-    except Exception as e:
-        print(f"[AFTER_RECORD ERROR] {repr(e)}")
-        vr.say("うまく聞き取れませんでした。もう一度ゆっくりお話しください。", language="ja-JP")
-
-    return Response(str(vr), mimetype="text/xml")
-
-# --- 超ミニ後処理（日本語整形） ---
+# --------- ユーティリティ ---------
 def clean_ja_transcript(text: str) -> str:
     if not text: return text
     m = {
@@ -132,7 +22,6 @@ def clean_ja_transcript(text: str) -> str:
     if t and not any(p in t for p in "。.!?！？"): t += "。"
     return t
 
-# --- ユーティリティ ---
 def backoff_retry(fn, tries=3, base=0.8):
     last = None
     for i in range(tries):
@@ -145,10 +34,12 @@ def backoff_retry(fn, tries=3, base=0.8):
     raise last
 
 def download_recording(url: str) -> bytes:
-    r = requests.get(url, timeout=20); 
-    if r.status_code == 200 and r.content: return r.content
+    # Twilioは .wav 末尾が付かない場合がある
+    r = requests.get(url, timeout=20)
+    if r.status_code == 200 and r.content:
+        return r.content
     alt = url if url.endswith(".wav") else (url + ".wav")
-    r2 = requests.get(alt, timeout=20); r2.raise_for_status(); 
+    r2 = requests.get(alt, timeout=20); r2.raise_for_status()
     return r2.content
 
 def to_pcm16k_mono(raw: bytes) -> bytes:
@@ -159,11 +50,18 @@ def to_pcm16k_mono(raw: bytes) -> bytes:
             ["ffmpeg","-y","-i",fin.name,"-ac","1","-ar","16000","-f","wav",fout.name],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
-        with open(fout.name,"rb") as f: return f.read()
+        with open(fout.name,"rb") as f: 
+            data = f.read()
+        try:
+            os.remove(fout.name)
+        except Exception:
+            pass
+        return data
 
 def whisper_transcribe_wav16(wav: bytes) -> str:
     api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key: raise RuntimeError("OPENAI_API_KEY is not set")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set")
     url = "https://api.openai.com/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {api_key}"}
     files = {
@@ -172,7 +70,7 @@ def whisper_transcribe_wav16(wav: bytes) -> str:
         "language": (None, "ja"),
         "temperature": (None, "0")
     }
-    resp = requests.post(url, headers=headers, files=files, timeout=60)
+    resp = requests.post(url, headers=headers, files=files, timeout=30)
     resp.raise_for_status()
     return resp.json().get("text","")
 
@@ -192,10 +90,25 @@ def reply_for(intent: str) -> str:
         return "自費料金のご質問ですね。内容により費用が異なります。代表的な費用は当院ウェブサイトに掲載しています。"
     return "ご用件を承りました。内容を確認のうえ、折り返しご案内いたします。"
 
-# --- Routes ---
+# --------- グローバル・エラーハンドラ（500防止） ---------
+@app.errorhandler(Exception)
+def handle_any_error(e):
+    print(f"[ERROR] {repr(e)}")
+    vr = VoiceResponse()
+    vr.say("システムエラーが発生しました。お手数ですが、もう一度おかけ直しください。", language="ja-JP")
+    return Response(str(vr), mimetype="text/xml", status=200)
+
+# --------- Routes ---------
 @app.get("/health")
 def health():
     return {"ok": True}, 200
+
+@app.get("/routes")
+def show_routes():
+    data = []
+    for rule in app.url_map.iter_rules():
+        data.append({"rule": str(rule), "methods": sorted(list(rule.methods))})
+    return {"routes": data}, 200
 
 @app.post("/voice")
 def voice():
@@ -203,7 +116,8 @@ def voice():
     g = Gather(num_digits=1, action=url_for("menu", _external=True), timeout=5)
     g.say("お電話ありがとうございます。予約は1、保険は2、自費診療は3を押してください。オペレーターは0です。押さない場合は録音に進みます。", language="ja-JP")
     vr.append(g)
-    vr.redirect(url_for("record", _external=True))
+    # ここは POST 指定で /record に遷移（Twilio既定のGETを避ける）
+    vr.redirect(url_for("record", _external=True), method="POST")
     return Response(str(vr), mimetype="text/xml")
 
 @app.post("/menu")
@@ -222,33 +136,72 @@ def menu():
         return Response(str(vr), mimetype="text/xml")
     else:
         vr.say("選択が認識できませんでした。録音に進みます。", language="ja-JP")
-    with vr.record(action=url_for("transcribe", _external=True), transcribe=False, max_length=90, play_beep=True):
-        vr.say("ピー音の後、90秒まで録音できます。", language="ja-JP")
+    with vr.record(
+        action=url_for("after_record", _external=True, retry=0),
+        transcribe=False,
+        max_length=90,
+        play_beep=True,
+        finishOnKey="#",
+        timeout=5,
+        trim="trim-silence"
+    ):
+        vr.say("ピー音の後、90秒まで録音できます。終わったらシャープを押してください。", language="ja-JP")
     return Response(str(vr), mimetype="text/xml")
 
-@app.post("/record")
+# ★ GET/POST 両対応：TwilioがGETで来ても確実に応答
+@app.route("/record", methods=["GET","POST"])
 def record():
     vr = VoiceResponse()
-    with vr.record(action=url_for("transcribe", _external=True), transcribe=False, max_length=90, play_beep=True):
-        vr.say("ピー音の後にご用件をどうぞ。", language="ja-JP")
+    with vr.record(
+        action=url_for("after_record", _external=True, retry=0),
+        transcribe=False,
+        max_length=90,
+        play_beep=True,
+        finishOnKey="#",
+        timeout=5,
+        trim="trim-silence"
+    ):
+        vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
     return Response(str(vr), mimetype="text/xml")
 
-@app.post("/transcribe")
-def transcribe():
-    recording_url = request.form.get("RecordingUrl")
+@app.route("/after_record", methods=["GET","POST"])
+def after_record():
+    retry = int(request.args.get("retry", "0"))
+    recording_url = request.form.get("RecordingUrl") or request.values.get("RecordingUrl")
     vr = VoiceResponse()
+
+    if not recording_url:
+        if retry == 0:
+            vr.say("音声が記録されませんでした。もう一度お願いします。", language="ja-JP")
+            with vr.record(
+                action=url_for("after_record", _external=True, retry=1),
+                transcribe=False,
+                max_length=90,
+                play_beep=True,
+                finishOnKey="#",
+                timeout=5,
+                trim="trim-silence"
+            ):
+                vr.say("ピー音の後にご用件をどうぞ。終わったらシャープを押してください。", language="ja-JP")
+            return Response(str(vr), mimetype="text/xml")
+        else:
+            vr.say("お電話ありがとうございました。またおかけください。", language="ja-JP")
+            return Response(str(vr), mimetype="text/xml")
+
     try:
         audio = backoff_retry(lambda: download_recording(recording_url))
         wav16 = to_pcm16k_mono(audio)
         raw = backoff_retry(lambda: whisper_transcribe_wav16(wav16))
         text = clean_ja_transcript(raw)
         intent = route_intent(text)
-        vr.say(reply_for(intent), language="ja-JP")
-    except Exception:
+        reply = reply_for(intent)
+        vr.say(reply, language="ja-JP")
+    except Exception as e:
+        print(f"[AFTER_RECORD ERROR] {repr(e)}")
         vr.say("うまく聞き取れませんでした。もう一度ゆっくりお話しください。", language="ja-JP")
+
     return Response(str(vr), mimetype="text/xml")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5005))
     app.run(host="0.0.0.0", port=port, debug=False)
-
